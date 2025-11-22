@@ -1,0 +1,35 @@
+FROM ghcr.io/prefix-dev/pixi:0.59.0 AS build
+
+# copy source code, pixi.toml and pixi.lock to the container
+WORKDIR /app
+COPY pixi.toml pixi.lock .
+# install dependencies to `/app/.pixi/envs/default`
+# use `--locked` to ensure the lockfile is up to date with pixi.toml
+RUN pixi install --locked
+# create the shell-hook bash script to activate the environment
+RUN pixi shell-hook -s bash > /shell-hook
+RUN echo "#!/bin/bash" > /app/entrypoint.sh
+RUN cat /shell-hook >> /app/entrypoint.sh
+# extend the shell-hook script to run the command passed to the container
+RUN echo 'exec "$@"' >> /app/entrypoint.sh
+
+RUN apt-get update && apt-get install -y wget unzip
+RUN wget -O faprotax.zip "https://pages.uoregon.edu/slouca/LoucaLab/archive/FAPROTAX/SECTION_Download/MODULE_Downloads/CLASS_Latest%20release/UNIT_FAPROTAX_1.2.12/FAPROTAX_1.2.12.zip"
+RUN unzip -j faprotax.zip 'FAPROTAX_*/collapse_table.py' 'FAPROTAX_*/FAPROTAX.txt' 'FAPROTAX_*/README.txt'
+
+FROM ubuntu:24.04 AS production
+WORKDIR /app
+# only copy the production environment into prod container
+# please note that the "prefix" (path) needs to stay the same as in the build container
+COPY --from=build /app/.pixi/envs /app/.pixi/envs
+COPY --from=build --chmod=0775 /app/entrypoint.sh /app
+COPY --from=build --chmod=0775 /app/collapse_table.py /app
+COPY --from=build /app/FAPROTAX.txt /app
+COPY --from=build /app/README.txt /app
+
+RUN ln -s /app/collapse_table.py /usr/local/bin
+
+USER ubuntu
+
+ENTRYPOINT [ "/app/entrypoint.sh" ]
+CMD [ "collapse_table.py", "--help" ]
